@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   STAGES,
   assess,
@@ -9,8 +9,12 @@ import {
   type Answer,
   type Question,
 } from "@/data/checklist";
+import { termsFor } from "@/data/glossary";
 
 type View = "intro" | "stage" | "results";
+type Answers = Record<string, Answer | undefined>;
+
+const STORAGE_KEY = "land-checklist-v1";
 
 const BUTTONS: { value: Answer; label: string }[] = [
   { value: "yes", label: "Yes" },
@@ -23,6 +27,24 @@ const ACTIVE: Record<Answer, string> = {
   no: "bg-red-600 text-white border-red-600",
   unsure: "bg-amber-500 text-white border-amber-500",
 };
+
+function Explainer({ text }: { text: string }) {
+  const terms = termsFor(text);
+  if (terms.length === 0) return null;
+  return (
+    <details className="mt-2 rounded-lg bg-blue-50 p-2 text-sm text-blue-900">
+      <summary className="cursor-pointer font-medium">What is this?</summary>
+      <dl className="mt-2 space-y-2">
+        {terms.map((t) => (
+          <div key={t.id}>
+            <dt className="font-semibold">{t.name}</dt>
+            <dd>{t.meaning}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
+}
 
 function QuestionCard({
   q,
@@ -37,6 +59,7 @@ function QuestionCard({
     <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
       <p className="font-medium text-gray-900">{q.text}</p>
       <p className="mt-1 text-sm text-gray-600">{q.why}</p>
+      <Explainer text={q.text} />
       <div className="mt-3 flex gap-2">
         {BUTTONS.map((b) => (
           <button
@@ -64,10 +87,54 @@ function QuestionCard({
 export default function Checklist() {
   const [view, setView] = useState<View>("intro");
   const [stageIdx, setStageIdx] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, Answer | undefined>>({});
+  const [answers, setAnswers] = useState<Answers>({});
+  const [hydrated, setHydrated] = useState(false);
+
+  // Load saved progress once, in the browser only.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved && typeof saved === "object") {
+          if (saved.answers && typeof saved.answers === "object") {
+            setAnswers(saved.answers);
+          }
+          if (
+            typeof saved.stageIdx === "number" &&
+            saved.stageIdx >= 0 &&
+            saved.stageIdx < STAGES.length
+          ) {
+            setStageIdx(saved.stageIdx);
+          }
+        }
+      }
+    } catch {
+      // Storage can be blocked or corrupted. Start fresh.
+    }
+    setHydrated(true);
+  }, []);
+
+  // Save progress whenever it changes (after the first load).
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ answers, stageIdx }));
+    } catch {
+      // Ignore storage errors.
+    }
+  }, [answers, stageIdx, hydrated]);
 
   const stage = STAGES[stageIdx];
   const isLast = stageIdx === STAGES.length - 1;
+  const hasProgress = Object.keys(answers).length > 0;
+  const totalQuestions = STAGES.reduce((n, s) => n + s.questions.length, 0);
+
+  function startOver() {
+    setAnswers({});
+    setStageIdx(0);
+    setView("intro");
+  }
 
   if (view === "intro") {
     return (
@@ -75,9 +142,9 @@ export default function Checklist() {
         <h1 className="text-2xl font-bold">Land Purchase Checklist</h1>
         <p className="mt-1 text-gray-700">Kwara State · Check before you pay</p>
         <p className="mt-4">
-          Answer {STAGES.reduce((n, s) => n + s.questions.length, 0)} short
-          questions in {STAGES.length} stages. You will get a clear result and a
-          list of what to ask your lawyer and surveyor.
+          Answer {totalQuestions} short questions in {STAGES.length} stages. You
+          will get a clear result and a list of what to ask your lawyer and
+          surveyor.
         </p>
         <p className="mt-4 rounded-lg bg-gray-100 p-3 text-sm text-gray-700">
           {DISCLAIMER}
@@ -89,8 +156,21 @@ export default function Checklist() {
           onClick={() => setView("stage")}
           className="mt-6 w-full rounded-lg bg-black px-4 py-3 font-medium text-white"
         >
-          Start
+          {hasProgress ? "Continue where you stopped" : "Start"}
         </button>
+        {hasProgress && (
+          <>
+            <button
+              onClick={startOver}
+              className="mt-2 w-full rounded-lg border border-gray-300 px-4 py-3"
+            >
+              Start over
+            </button>
+            <p className="mt-2 text-xs text-gray-500">
+              Your answers are saved only on this device.
+            </p>
+          </>
+        )}
       </main>
     );
   }
@@ -113,6 +193,7 @@ export default function Checklist() {
               <li key={q.id} className="rounded-lg border bg-white p-3 text-sm">
                 <p className="font-medium">{q.text}</p>
                 <p className="mt-1 text-gray-700">{q.nextStep}</p>
+                <Explainer text={q.text} />
               </li>
             ))}
           </ul>
@@ -133,19 +214,15 @@ export default function Checklist() {
         <div className="mt-4 flex gap-2">
           <button
             onClick={() => {
-              setView("stage");
               setStageIdx(0);
+              setView("stage");
             }}
             className="flex-1 rounded-lg border border-gray-300 px-4 py-3"
           >
             Review answers
           </button>
           <button
-            onClick={() => {
-              setAnswers({});
-              setStageIdx(0);
-              setView("intro");
-            }}
+            onClick={startOver}
             className="flex-1 rounded-lg bg-black px-4 py-3 text-white"
           >
             Start over
